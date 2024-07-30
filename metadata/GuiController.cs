@@ -511,7 +511,7 @@ namespace Synthesia
          return true;
       }
 
-      static private string SynthesiaDataPath(bool standard)
+      public static string SynthesiaDataPath(bool standard)
       {
          // The data directory is different on the Mac version
          int platform = (int)Environment.OSVersion.Platform;
