@@ -1,21 +1,222 @@
-﻿using CommandLine.Text;
-using CommandLine;
+﻿using CommandLine;
 using Synthesia;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Xml.Linq;
+using System.Text;
+using Melanchall.DryWetMidi.Core;
+using Melanchall.DryWetMidi.Interaction;
+using Melanchall.DryWetMidi.MusicTheory;
+using Melanchall.DryWetMidi.Common;
 
 namespace Cli
 {
    public class Program
    {
+      public enum PartType
+      {
+         /// Ignore(-)
+         Ignore = '-',
+
+         /// Left(L)
+         Left = 'L',
+
+         /// Right(R)
+         Right = 'R',
+
+         /// Background(B)
+         Background = 'B',
+
+         /// Dispose(X)
+         Dispose = 'X',
+      }
+
+      public class NotePart
+      {
+         public NotePart()
+         {
+            Length = 1;
+         }
+
+         public PartType PartType { get; set; }
+
+         public int Length { get; set; }
+      }
+
+      public class Part : Dictionary<int, List<NotePart>>
+      {
+         public Part()
+         {
+         }
+
+         public Part(PartType partType) : this()
+         {
+            AllPartType = partType;
+         }
+
+         public PartType AllPartType { get; set; }
+
+         public PartType SearchPartType(int measure, int index)
+         {
+            if (this.ContainsKey(measure))
+            {
+               var sum = 0;
+               return this[measure].FirstOrDefault(x =>
+               {
+                  sum += x.Length;
+                  return sum > index;
+               })?.PartType ?? AllPartType;
+            }
+
+            return AllPartType;
+         }
+      }
 
       public class Options
       {
          [Option('f', "folder", Required = false, HelpText = "Folder to read midi files from. Leave empty for current directory.")]
          public string Folder { get; set; }
+      }
+
+      public static IDictionary<int, IDictionary<int, string>> ConvertToTrackFormat(string formatString)
+      {
+         // Based on https://github.com/d5k-project/Synthesia.MetaDataParser/blob/master/Synthesia.MetaDataParser/SynthesiaMetaDataParser.cs
+         if (string.IsNullOrEmpty(formatString))
+         {
+            return new Dictionary<int, IDictionary<int, string>>();
+         }
+
+         //get tracks
+         var trackStrings = formatString.Replace(" ", string.Empty)
+            .Split('t').Where(t => !string.IsNullOrEmpty(t))
+            .ToDictionary(k => int.Parse(k.Split(':').FirstOrDefault()), v =>
+            {
+               var measure = ("t" + v).Split('m').Where(m => !string.IsNullOrEmpty(m) && m.Split(':').Count(x => !string.IsNullOrEmpty(x)) == 2)
+                  .ToDictionary(k =>
+                  {
+                     var keyString = k.Split(':').FirstOrDefault();
+
+                     if (keyString != null && keyString.Contains('t'))
+                     {
+                        return -1;
+                     }
+
+                     return int.Parse(keyString);
+                  },
+                  vv => vv.Split(':').LastOrDefault());
+
+               return (IDictionary<int, string>)measure;
+            });
+
+         return trackStrings;
+      }
+
+      public static List<string> SpecialSplit(string input)
+      {
+         var result = new List<string>();
+
+         var currentString = new StringBuilder(4);
+         for (var i = 0; i < input.Length; i++)
+         {
+            var c = input[i];
+
+            if (currentString.Length > 0)
+            {
+               // Determine whether we're at constraints or not.
+               var firstCharLetter = currentString[0] >= 'A' && currentString[0] <= 'Z';
+               var atMaxLetterLength = firstCharLetter && currentString.Length == 4;
+               var atMaxNumberLength = !firstCharLetter && currentString.Length == 3;
+
+               // Split if at max letter/number length, or if we're on a letter.
+               var mustSplit = atMaxLetterLength || atMaxNumberLength || (c >= 'A' && c <= 'Z') || c == '-';
+
+               if (mustSplit)
+               {
+                  // If we must split our string, then verify we're not leaving an orphaned '0'.
+                  if (c == '0')
+                  {
+                     // Go back a letter, take it out of the new string, and set our `c` to it.
+                     i--;
+                     currentString.Length--;
+                     c = input[i];
+                  }
+
+                  // Add and clear the string to our result.
+                  result.Add(currentString.ToString());
+                  currentString.Clear();
+               }
+            }
+
+            // Add our `c` to the string.
+            currentString.Append(c);
+         }
+
+         // Add our string to the result.
+         result.Add(currentString.ToString());
+
+         return result;
+      }
+
+      public static IDictionary<int, Part> ConvertStringToParts(string partsString)
+      {
+         if (string.IsNullOrEmpty(partsString))
+         {
+            return new Dictionary<int, Part>();
+         }
+
+         var dict = ConvertToTrackFormat(partsString);
+
+         var temp = dict.ToDictionary(k => k.Key,
+             v =>
+             {
+                var part = new Part();
+
+                var noteParts = v.Value;
+                foreach (var notePart in noteParts)
+                {
+                   var notePartKey = notePart.Key;
+                   var notePartValue = notePart.Value;
+
+                   if (notePartKey == -1)
+                   {
+                      //Set all key
+                      part.AllPartType = (PartType)notePartValue[0];
+                   }
+                   else
+                   {
+                      var notes = new List<NotePart>();
+                      var notesStr = SpecialSplit(notePartValue);
+                      foreach (var noteStr in notesStr)
+                      {
+                         var note = new NotePart
+                         {
+                            PartType = (PartType)noteStr[0]
+                         };
+
+                         if (noteStr.Any(char.IsDigit))
+                            note.Length = int.Parse(noteStr.Substring(1, noteStr.Length - 1));
+
+                         notes.Add(note);
+                      }
+
+                      //set partial key
+                      part.Add(notePartKey, notes);
+                   }
+                }
+
+                return part;
+             });
+
+         var asdf = temp.Values.First().Values.SelectMany(x => x).ToList();
+         var test = new List<NotePart>();
+         if (asdf != test)
+         {
+
+         }
+
+         return temp;
       }
 
       public static void Main(string[] args)
@@ -38,6 +239,66 @@ namespace Cli
             Metadata.AddSong(songEntry);
 
             ImportFile();
+
+            var parts = ConvertStringToParts(Metadata.Songs.First().Parts);
+            if (parts.Count > 1)
+            {
+               Console.WriteLine("Yikes, expected 1 track");
+            }
+
+            var left = parts.First().Value.Select(x => x.Value).Select(x => x.Where(y => y.PartType == PartType.Left)).SelectMany(x => x).ToList();
+            var right = parts.First().Value.Select(x => x.Value).Select(x => x.Where(y => y.PartType != PartType.Left)).SelectMany(x => x).ToList();
+
+            var leftLength = left.Sum(y => y.Length);
+            var rightLength = right.Sum(y => y.Length);
+
+            var isLeft = leftLength > rightLength;
+
+            var midiFile = MidiFile.Read(file.FullName);
+            var notes = midiFile.GetTrackChunks().SelectMany(x => x.ManageNotes().Objects)
+               .OrderBy(x => x.Time)
+               .ToList()
+               .Select((s, index) => new { s, index })
+               .ToDictionary(x => x.index, x => x.s);
+
+            var acceptibleTypes = new HashSet<MidiEventType>() { MidiEventType.NoteOff, MidiEventType.NoteOn };
+            var events = midiFile.GetObjects(ObjectType.TimedEvent).Select(x => (TimedEvent)x).Where(x => !acceptibleTypes.Contains(x.Event.EventType)).ToList();
+
+            var channelLeft = FourBitNumber.Parse("0");
+            var channelRight = FourBitNumber.Parse("1");
+            foreach (var note in notes)
+            {
+               note.Value.Channel = channelLeft;
+            }
+
+            var midiFileOut = new MidiFile
+            {
+               TimeDivision = midiFile.TimeDivision
+            };
+
+            var tempoMap = midiFileOut.GetTempoMap();
+
+            var trackChunk = new TrackChunk();
+            using (var notesManager = trackChunk.ManageNotes())
+            {
+               for (var i = 0; i < notes.Count(); i++)
+               {
+                  notesManager.Objects.Add(notes[i]);
+               }
+            }
+
+            var trackChunkMeta = new TrackChunk();
+            using (var eventsManager = trackChunkMeta.ManageTimedEvents())
+            {
+               foreach (var ev in events)
+               {
+                  eventsManager.Objects.Add(ev);
+               }
+            }
+
+            midiFileOut.Chunks.Add(trackChunkMeta);
+            midiFileOut.Chunks.Add(trackChunk);
+            midiFileOut.Write(directoryInfo.FullName.Replace("\\", "/") + "/" + songEntry.Title + "z.mid");
 
             var outFile = new FileInfo(directoryInfo.FullName.Replace("\\", "/") + "/" + songEntry.Title + ".synthesia");
             using (var output = outFile.Create()) Metadata.Save(output);
