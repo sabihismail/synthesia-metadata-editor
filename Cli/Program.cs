@@ -168,6 +168,8 @@ namespace Cli
 
          var dict = ConvertToTrackFormat(partsString);
 
+         var trackType = dict.Values.First();
+
          var temp = dict.ToDictionary(k => k.Key,
              v =>
              {
@@ -247,7 +249,7 @@ namespace Cli
             }
 
             var left = parts.First().Value.Select(x => x.Value).Select(x => x.Where(y => y.PartType == PartType.Left)).SelectMany(x => x).ToList();
-            var right = parts.First().Value.Select(x => x.Value).Select(x => x.Where(y => y.PartType != PartType.Left)).SelectMany(x => x).ToList();
+            var right = parts.First().Value.Select(x => x.Value).Select(x => x.Where(y => y.PartType == PartType.Right)).SelectMany(x => x).ToList();
 
             var leftLength = left.Sum(y => y.Length);
             var rightLength = right.Sum(y => y.Length);
@@ -261,8 +263,29 @@ namespace Cli
                .Select((s, index) => new { s, index })
                .ToDictionary(x => x.index, x => x.s);
 
+            
+
             var acceptibleTypes = new HashSet<MidiEventType>() { MidiEventType.NoteOff, MidiEventType.NoteOn };
             var events = midiFile.GetObjects(ObjectType.TimedEvent).Select(x => (TimedEvent)x).Where(x => !acceptibleTypes.Contains(x.Event.EventType)).ToList();
+
+            var measureMapping = new Dictionary<long, List<Melanchall.DryWetMidi.Interaction.Note>>();
+            using (var tempoMapManager = new TempoMapManager(midiFile.TimeDivision, midiFile.GetTrackChunks().Select(c => c.Events)))
+            {
+               var tempoMap123 = tempoMapManager.TempoMap;
+
+               foreach (var note in notes)
+               {
+                  var bars = note.Value.TimeAs<BarBeatTicksTimeSpan>(tempoMap123);
+                  var measure = bars.Bars + 1;
+
+                  if (!lst.ContainsKey(measure))
+                  {
+                     measureMapping[measure] = new List<Melanchall.DryWetMidi.Interaction.Note>();
+                  }
+
+                  measureMapping[measure].Add(note.Value);
+               }
+            }
 
             var channelLeft = FourBitNumber.Parse("0");
             var channelRight = FourBitNumber.Parse("1");
