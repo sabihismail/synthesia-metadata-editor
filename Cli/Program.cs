@@ -45,7 +45,7 @@ namespace Cli
          public int Length { get; set; }
       }
 
-      public class Part : Dictionary<int, List<NotePart>>
+      public class Part : Dictionary<int, List<PartType>>
       {
          public Part()
          {
@@ -57,21 +57,17 @@ namespace Cli
          }
 
          public PartType AllPartType { get; set; }
+      }
 
-         public PartType SearchPartType(int measure, int index)
+      public class NoteWithHand
+      {
+         public NoteWithHand()
          {
-            if (this.ContainsKey(measure))
-            {
-               var sum = 0;
-               return this[measure].FirstOrDefault(x =>
-               {
-                  sum += x.Length;
-                  return sum > index;
-               })?.PartType ?? AllPartType;
-            }
-
-            return AllPartType;
          }
+
+         public Melanchall.DryWetMidi.Interaction.Note Note { get; set; }
+
+         public PartType PartType { get; set; }
       }
 
       public class Options
@@ -168,57 +164,46 @@ namespace Cli
 
          var dict = ConvertToTrackFormat(partsString);
 
-         var trackType = dict.Values.First();
-
-         var temp = dict.ToDictionary(k => k.Key,
-             v =>
-             {
-                var part = new Part();
-
-                var noteParts = v.Value;
-                foreach (var notePart in noteParts)
-                {
-                   var notePartKey = notePart.Key;
-                   var notePartValue = notePart.Value;
-
-                   if (notePartKey == -1)
-                   {
-                      //Set all key
-                      part.AllPartType = (PartType)notePartValue[0];
-                   }
-                   else
-                   {
-                      var notes = new List<NotePart>();
-                      var notesStr = SpecialSplit(notePartValue);
-                      foreach (var noteStr in notesStr)
-                      {
-                         var note = new NotePart
-                         {
-                            PartType = (PartType)noteStr[0]
-                         };
-
-                         if (noteStr.Any(char.IsDigit))
-                            note.Length = int.Parse(noteStr.Substring(1, noteStr.Length - 1));
-
-                         notes.Add(note);
-                      }
-
-                      //set partial key
-                      part.Add(notePartKey, notes);
-                   }
-                }
-
-                return part;
-             });
-
-         var asdf = temp.Values.First().Values.SelectMany(x => x).ToList();
-         var test = new List<NotePart>();
-         if (asdf != test)
+         var result = dict.ToDictionary(k => k.Key, v =>
          {
+            var part = new Part();
 
-         }
+            foreach (var notePart in v.Value)
+            {
+               if (notePart.Key == -1)
+               {
+                  // Set all key
+                  part.AllPartType = (PartType)notePart.Value[0];
+               }
+               else
+               {
+                  var notes = new List<PartType>();
+                  var notesStr = SpecialSplit(notePart.Value);
 
-         return temp;
+                  foreach (var noteStr in notesStr)
+                  {
+                     var partType = (PartType)noteStr[0];
+                     notes.Add(partType);
+
+                     if (noteStr.Any(char.IsDigit))
+                     {
+                        var length = int.Parse(noteStr.Substring(1, noteStr.Length - 1));
+
+                        for (var i = 0; i < length - 1; i++)
+                        {
+                           notes.Add(partType);
+                        }
+                     }
+                  }
+
+                  part.Add(notePart.Key, notes);
+               }
+            }
+
+            return part;
+         });
+
+         return result;
       }
 
       public static void Main(string[] args)
@@ -248,11 +233,11 @@ namespace Cli
                Console.WriteLine("Yikes, expected 1 track");
             }
 
-            var left = parts.First().Value.Select(x => x.Value).Select(x => x.Where(y => y.PartType == PartType.Left)).SelectMany(x => x).ToList();
-            var right = parts.First().Value.Select(x => x.Value).Select(x => x.Where(y => y.PartType == PartType.Right)).SelectMany(x => x).ToList();
+            var left = parts.First().Value.Select(x => x.Value).Select(x => x.Where(y => y == PartType.Left)).SelectMany(x => x).ToList();
+            var right = parts.First().Value.Select(x => x.Value).Select(x => x.Where(y => y == PartType.Right)).SelectMany(x => x).ToList();
 
-            var leftLength = left.Sum(y => y.Length);
-            var rightLength = right.Sum(y => y.Length);
+            var leftLength = left.Count;
+            var rightLength = right.Count;
 
             var isLeft = leftLength > rightLength;
 
@@ -263,12 +248,10 @@ namespace Cli
                .Select((s, index) => new { s, index })
                .ToDictionary(x => x.index, x => x.s);
 
-            
-
             var acceptibleTypes = new HashSet<MidiEventType>() { MidiEventType.NoteOff, MidiEventType.NoteOn };
             var events = midiFile.GetObjects(ObjectType.TimedEvent).Select(x => (TimedEvent)x).Where(x => !acceptibleTypes.Contains(x.Event.EventType)).ToList();
 
-            var measureMapping = new Dictionary<long, List<Melanchall.DryWetMidi.Interaction.Note>>();
+            var measureMapping = new Dictionary<long, List<NoteWithHand>>();
             using (var tempoMapManager = new TempoMapManager(midiFile.TimeDivision, midiFile.GetTrackChunks().Select(c => c.Events)))
             {
                var tempoMap123 = tempoMapManager.TempoMap;
@@ -278,12 +261,26 @@ namespace Cli
                   var bars = note.Value.TimeAs<BarBeatTicksTimeSpan>(tempoMap123);
                   var measure = bars.Bars + 1;
 
-                  if (!lst.ContainsKey(measure))
+                  if (!measureMapping.ContainsKey(measure))
                   {
-                     measureMapping[measure] = new List<Melanchall.DryWetMidi.Interaction.Note>();
+                     measureMapping[measure] = new List<NoteWithHand>();
                   }
 
-                  measureMapping[measure].Add(note.Value);
+                  measureMapping[measure].Add(new NoteWithHand
+                  {
+                     Note = note.Value
+                  });
+               }
+            }
+
+            foreach (var measureEntry in measureMapping)
+            {
+               var i = 0;
+               var measure = measureEntry.Key;
+
+               foreach (var note in measureEntry.Value)
+               {
+
                }
             }
 
